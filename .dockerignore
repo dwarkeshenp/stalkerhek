@@ -19,6 +19,7 @@
 # Never bake local credentials / profile state into images.
 profiles.json
 filters.json
+auth.json
 data/
 
 # Optional local config (if you create one).
