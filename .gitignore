@@ -33,6 +33,7 @@ coverage.*
 # They MUST NOT be committed.
 profiles.json
 filters.json
+auth.json
 
 # Common persistent data volume directories.
 data/

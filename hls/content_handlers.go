@@ -67,8 +67,8 @@ func handleContentHLS(cr *ContentRequest) {
 
 	resp, err := response(link)
 	if err != nil {
-		http.Error(cr.ResponseWriter, "internal server error", http.StatusInternalServerError)
-		log.Println(err)
+		log.Printf("[ERROR] HLS stream failed for channel %s: %v", cr.Title, err)
+		http.Error(cr.ResponseWriter, "stream unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	defer resp.Body.Close()
@@ -102,8 +102,8 @@ func handleEstablishedContentHLS(cr *ContentRequest, resp *http.Response, link s
 func handleContentMedia(cr *ContentRequest) {
 	resp, err := response(cr.Channel.Link)
 	if err != nil {
-		http.Error(cr.ResponseWriter, "internal server error", http.StatusInternalServerError)
-		log.Println(err)
+		log.Printf("[ERROR] Media stream failed for channel %s: %v", cr.Title, err)
+		http.Error(cr.ResponseWriter, "stream unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	defer resp.Body.Close()

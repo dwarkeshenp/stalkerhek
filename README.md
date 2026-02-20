@@ -47,17 +47,21 @@ You get:
 - [Docker](#docker)
 - [Ports](#ports)
 - [Web UI usage](#web-ui-usage)
+- [Authentication](#authentication)
+- [Optional portal parameters](#optional-portal-parameters)
 - [Filters (per-profile)](#filters-per-profile)
 - [Advanced settings (stability)](#advanced-settings-stability)
 - [Persistence (where data is stored)](#persistence-where-data-is-stored)
+- [Environment variables](#environment-variables)
 - [Troubleshooting](#troubleshooting)
 - [Security notes](#security-notes)
+- [Changelog](#changelog)
 - [Credits and license](#credits-and-license)
 
 ## What this is
 `stalkerhek` is a single-binary Go application.
 
-It authenticates to a Stalker portal (typically `portal.php`) using your profile credentials (MAC address, and internally MAG-style device identifiers), fetches your channel list, then exposes:
+It authenticates to a Stalker portal (typically `portal.php` or `load.php`) using your profile credentials (MAC address, and internally MAG-style device identifiers), fetches your channel list, then exposes:
 - An **HLS endpoint** your players can read
 - A **Proxy endpoint** that mimics STB interactions for clients that need it
 
@@ -160,6 +164,100 @@ If a profile fails to start, logs usually show:
 - wrong MAC address
 - portal handshake/auth issues
 
+## Authentication
+
+Stalkerhek includes a complete authentication system to protect your WebUI, especially important for Docker deployments.
+
+### First-Time Setup
+
+When you first access Stalkerhek:
+1. You'll be redirected to `/register` to create an admin account
+2. Set a username and password (minimum 4 characters)
+3. Optionally set a security question for password recovery
+4. After registration, you'll be automatically logged in
+
+### Authentication Features
+
+- **Session-based login** with secure cookies
+- **bcrypt password hashing** for security
+- **7-day session persistence**
+- **Password reset** via security questions
+- **Local network bypass** for trusted subnets
+- **Multi-user support** (when enabled)
+
+### Account Management
+
+Access `/account` to:
+- **Password Tab**: Change your current password
+- **Security Tab**: 
+  - Toggle "Local Network Bypass" (skip auth on LAN)
+  - View trusted network status
+  - Check security question status
+- **Users Tab** (when enabled): Add new user accounts
+
+### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `STALKERHEK_DISABLE_AUTH` | Set to `1` to disable authentication entirely | (unset) |
+| `STALKERHEK_ALLOW_REGISTER` | Set to `1` to allow new registrations after first user | (unset) |
+| `STALKERHEK_AUTH_FILE` | Path to store user data | `auth.json` (or adjacent to profiles) |
+| `STALKERHEK_TRUSTED_SUBNETS` | Comma-separated list of trusted CIDR ranges | `127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16` |
+
+### Local Network Bypass
+
+By default, Stalkerhek trusts these private networks:
+- `127.0.0.0/8` (localhost)
+- `10.0.0.0/8` (private Class A)
+- `172.16.0.0/12` (private Class B)
+- `192.168.0.0/16` (private Class C)
+
+Devices on these networks can access the WebUI without logging in. You can:
+- Toggle this in `/account` → Security
+- Customize trusted subnets via `STALKERHEK_TRUSTED_SUBNETS`
+
+### Password Reset
+
+If you forget your password:
+1. Go to `/forgot-password`
+2. Enter your username
+3. Answer your security question (if set during registration)
+4. Set a new password
+
+**Note:** Password reset only works if you set a security question during registration.
+
+### Disabling Authentication
+
+For completely private/trusted environments:
+```bash
+STALKERHEK_DISABLE_AUTH=1 ./stalkerhek
+```
+
+**Warning:** Only disable auth if Stalkerhek is behind another authentication layer (VPN, reverse proxy, etc.)
+
+## Optional portal parameters
+
+When creating a profile, you only need to provide:
+- **Portal URL** (supports both `/portal.php` and `/load.php` endpoints)
+- **MAC address** (format: `00:1A:79:AA:BB:CC`)
+- **HLS port** and **Proxy port**
+
+All other fields are **optional** and use safe defaults automatically:
+
+| Field | Default Value | When to Override |
+|-------|---------------|------------------|
+| Username | (empty) | Only if provider requires login/password auth |
+| Password | (empty) | Only if provider requires login/password auth |
+| STB Model | `MAG254` | If provider expects a different model |
+| Serial Number | `0000000000000` | If provider requires specific SN |
+| Device ID | 64 `f`s | If provider requires specific device ID |
+| Device ID 2 | 64 `f`s | If provider requires specific device ID 2 |
+| Signature | 64 `f`s | If provider requires specific signature |
+| Time Zone | `UTC` | Change if provider expects different timezone |
+| Watchdog Interval | `5` minutes | Adjust based on provider requirements |
+
+**Recommendation:** Leave all advanced fields empty unless your provider specifically requires custom values. The system will use proven defaults that work for most providers.
+
 ## Filters (per-profile)
 
 Filters are designed for speed and safety.
@@ -209,12 +307,20 @@ For Docker:
 
 ### "Profile won't start"
 Check these first:
-- Portal URL must look like:
+- Portal URL must look like one of these:
   - `http(s)://HOST/portal.php`
-  - Some providers use `/stalker_portal/portal.php`
+  - `http(s)://HOST/load.php` (some providers use this instead)
+  - `http(s)://HOST/stalker_portal/server/portal.php`
+  - `http(s)://HOST/stalker_portal/server/load.php`
 - MAC address must look like:
   - `00:1A:79:AA:BB:CC`
 - Ports must be free
+
+**If you see "invalid character '<' looking for beginning of value":**
+This means the portal returned an HTML error page instead of JSON. Try:
+1. If your URL ends with `/portal.php`, try changing it to `/load.php`
+2. If your URL ends with `/load.php`, try changing it to `/portal.php`
+3. Check with your provider which endpoint is correct
 
 Open `/logs` and look for the first error.
 
@@ -235,6 +341,10 @@ Open `/logs` and look for the first error.
 - Profiles contain sensitive information (portal URL + MAC).
 
 See `SECURITY.md` for details.
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for a detailed history of changes and improvements.
 
 ## Credits and license
 

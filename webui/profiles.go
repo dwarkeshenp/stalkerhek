@@ -45,26 +45,28 @@ type Profile struct {
 }
 
 func profileWithDefaults(p Profile) Profile {
+	// Note: Empty values for optional fields are handled by server-side applyPortalDefaults()
+	// This function only sets defaults if user explicitly needs them pre-filled in UI
 	if p.Model == "" {
-		p.Model = "MAG254"
+		p.Model = "" // Server will default to MAG254
 	}
 	if p.SerialNumber == "" {
-		p.SerialNumber = "0000000000000"
+		p.SerialNumber = "" // Server will default to 0000000000000
 	}
 	if p.DeviceID == "" {
-		p.DeviceID = strings.Repeat("f", 64)
+		p.DeviceID = "" // Server will default to 64 'f's
 	}
 	if p.DeviceID2 == "" {
-		p.DeviceID2 = strings.Repeat("f", 64)
+		p.DeviceID2 = "" // Server will default to 64 'f's
 	}
 	if p.Signature == "" {
-		p.Signature = strings.Repeat("f", 64)
+		p.Signature = "" // Server will default to 64 'f's
 	}
 	if p.TimeZone == "" {
-		p.TimeZone = "UTC"
+		p.TimeZone = "" // Server will default to UTC
 	}
 	if p.WatchDogTime == 0 {
-		p.WatchDogTime = 5
+		p.WatchDogTime = 5 // Default to 5 minutes
 	}
 	return p
 }
@@ -88,17 +90,26 @@ func normalizePortalURL(raw string) string {
 	if err != nil {
 		return strings.TrimSpace(raw)
 	}
+
+	// Normalize path - check if user already specified a valid endpoint
+	lowerPath := strings.ToLower(u.Path)
+	hasValidEndpoint := strings.HasSuffix(lowerPath, "/portal.php") || strings.HasSuffix(lowerPath, "/load.php")
+
 	if u.Path == "" || u.Path == "/" {
+		// Default to portal.php if no path given
 		u.Path = "/portal.php"
-	}
-	if !strings.HasSuffix(strings.ToLower(u.Path), "/portal.php") && !strings.HasSuffix(strings.ToLower(u.Path), "/load.php") {
-		// If a random .php is given, portal.php is usually required in the same directory.
-		if strings.HasSuffix(strings.ToLower(u.Path), ".php") {
+	} else if !hasValidEndpoint {
+		// User provided some path but not a recognized endpoint
+		// Check if they provided any .php file
+		if strings.HasSuffix(lowerPath, ".php") {
+			// Replace with portal.php in the same directory
 			u.Path = path.Join(path.Dir(u.Path), "portal.php")
 		} else {
+			// Append portal.php to the path
 			u.Path = strings.TrimSuffix(u.Path, "/") + "/portal.php"
 		}
 	}
+	// If hasValidEndpoint, preserve exactly what user specified (load.php or portal.php)
 	return u.String()
 }
 
@@ -146,19 +157,25 @@ func friendlyStartError(err error) string {
 	low := strings.ToLower(e)
 
 	if strings.Contains(low, "invalid credentials") {
-		return "Login failed. Likely wrong Portal URL or MAC address. Tip: portal should end with /portal.php and MAC must match your provider. Open Logs for details."
+		return "Login failed. This could be:\n• Wrong Portal URL (check if it should be /portal.php or /load.php)\n• Wrong MAC address\n• Missing username/password if required by provider\nOpen Logs for details."
 	}
 	if strings.Contains(low, "portal returned no channel data") || strings.Contains(low, "no channels returned") {
-		return "No channels returned. This is usually a wrong MAC address or wrong Portal URL. Tip: use the exact provider URL ending in /portal.php and verify the MAC is correct. Open Logs for details."
+		return "No channels returned. This usually means:\n• Wrong MAC address\n• Wrong Portal URL endpoint (try /load.php instead of /portal.php or vice versa)\n• Provider blocking your connection\nOpen Logs for details."
 	}
 	if strings.Contains(low, "timed out") {
-		return "Connection timed out. Check Portal URL, internet, and whether the portal is reachable from this machine. Open Logs for details."
+		return "Connection timed out. Check:\n• Portal URL is correct\n• Internet connection\n• Portal is reachable from this machine\n• Firewall isn't blocking the connection\nOpen Logs for details."
 	}
 	if strings.Contains(low, "returned 401") || strings.Contains(low, "returned 403") {
-		return "Portal rejected the request (401/403). This is usually a wrong Portal URL, blocked MAC, or the provider is restricting access. Open Logs for details."
+		return "Portal rejected the request (401/403). This usually means:\n• Wrong Portal URL\n• Blocked MAC address\n• Provider is restricting access\n• Wrong endpoint (try /load.php instead of /portal.php)\nOpen Logs for details."
+	}
+	if strings.Contains(low, "returned 404") {
+		return "Portal endpoint not found (404). This usually means:\n• Wrong Portal URL path\n• Try using /load.php instead of /portal.php (or vice versa)\n• Check with your provider for the correct URL\nOpen Logs for details."
 	}
 	if strings.Contains(low, "no such host") || strings.Contains(low, "name resolution") {
-		return "Portal hostname could not be resolved. Check Portal URL spelling and DNS/network. Open Logs for details."
+		return "Portal hostname could not be resolved. Check:\n• Portal URL spelling\n• DNS settings\n• Network connection\nOpen Logs for details."
+	}
+	if strings.Contains(low, "invalid character '<'") {
+		return "Portal returned HTML instead of JSON. This usually means:\n• Wrong endpoint URL (the portal returned an error page)\n• Try using /load.php instead of /portal.php (or vice versa)\n• Portal might be down or blocking requests\nOpen Logs for details."
 	}
 	return e
 }
@@ -638,11 +655,13 @@ func RegisterProfileHandlers(mux *http.ServeMux, onStart func()) {
 	mux.HandleFunc("/dashboard", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		host := externalHost(r)
+		currentUser := getSessionUsername(r)
 		data := struct {
-			Host     string
-			Settings RuntimeSettings
-			Profiles []Profile
-		}{Host: host, Settings: GetRuntimeSettings(), Profiles: ListProfiles()}
+			Host        string
+			Settings    RuntimeSettings
+			Profiles    []Profile
+			CurrentUser string
+		}{Host: host, Settings: GetRuntimeSettings(), Profiles: ListProfiles(), CurrentUser: currentUser}
 
 		const tpl = `<!doctype html>
 <html>
@@ -834,9 +853,10 @@ func RegisterProfileHandlers(mux *http.ServeMux, onStart func()) {
           <label for="name">Profile name (optional)</label>
           <input id="name" name="name" placeholder="Living Room / Office / Backup" title="Optional: give it a name so you can recognize it" />
 
-          <label for="portal">Portal URL (required)</label>
-          <input id="portal" name="portal" required placeholder="http://example.com/portal.php" title="Paste your portal URL here" />
-          <div id="portalErr" class="err">Please paste a valid portal link. We'll try to fix it automatically.</div>
+          <label for="portal">Portal URL <span style="color:var(--muted);font-size:.85em">(portal.php or load.php)</span></label>
+          <input id="portal" name="portal" required placeholder="http://example.com/stalker_portal/server/portal.php" title="Paste your portal URL here. Supports both /portal.php and /load.php endpoints." />
+          <div id="portalErr" class="err">Please paste a valid portal URL ending with /portal.php or /load.php</div>
+          <div style="font-size:12px;color:var(--muted);margin-top:4px">Supports both /portal.php and /load.php endpoints</div>
 
           <label for="mac">MAC address (required)</label>
           <input id="mac" name="mac" required placeholder="00:1A:79:12:34:56" title="Example format: 00:1A:79:12:34:56" />
@@ -853,43 +873,60 @@ func RegisterProfileHandlers(mux *http.ServeMux, onStart func()) {
             </div>
           </div>
 
-          <details style="margin-top:12px">
-            <summary style="cursor:pointer;color:#7fba7f;font-size:.95em;user-select:none">Advanced Settings (optional)</summary>
-            <div style="margin-top:10px">
+          <details id="advancedDetails" style="margin-top:12px;border:1px solid var(--border);border-radius:12px;padding:12px;background:rgba(13,20,16,.55)">
+            <summary style="cursor:pointer;color:#7fba7f;font-size:.95em;user-select:none;display:flex;align-items:center;gap:8px">
+              <i class="fa-solid fa-sliders"></i> Advanced Portal Settings <span style="color:var(--muted);font-size:.85em">(all optional)</span>
+            </summary>
+            <div style="margin-top:14px">
+              <div style="margin-bottom:12px;padding:10px;border-radius:8px;background:rgba(45,122,78,.08);border:1px solid rgba(45,122,78,.25);color:#cfe0cf;font-size:13px">
+                <i class="fa-solid fa-circle-info" style="margin-right:6px"></i>
+                <strong>Tip:</strong> Leave these empty unless your provider requires specific values. The system will use safe defaults automatically.
+              </div>
               <div class="row two">
                 <div>
-                  <label for="username">Username</label>
-                  <input id="username" name="username" placeholder="Leave blank for Device ID auth" title="Portal username (if your provider uses login/password)" />
+                  <label for="username">Username <span style="color:var(--muted);font-size:.85em">(optional)</span></label>
+                  <input id="username" name="username" placeholder="Leave blank for Device ID auth" title="Portal username (only if your provider uses login/password instead of MAC)" />
+                  <div style="font-size:12px;color:var(--muted);margin-top:4px">Only if provider uses login/password</div>
                 </div>
                 <div>
-                  <label for="password">Password</label>
-                  <input id="password" name="password" type="password" placeholder="Leave blank for Device ID auth" title="Portal password" />
+                  <label for="password">Password <span style="color:var(--muted);font-size:.85em">(optional)</span></label>
+                  <input id="password" name="password" type="password" placeholder="Leave blank for Device ID auth" title="Portal password (only if your provider uses login/password)" />
                 </div>
               </div>
               <div class="row two">
                 <div>
-                  <label for="model">Model</label>
-                  <input id="model" name="model" placeholder="MAG254" title="STB model identifier" />
+                  <label for="model">STB Model <span style="color:var(--muted);font-size:.85em">(optional)</span></label>
+                  <input id="model" name="model" placeholder="MAG254" title="Set-top box model identifier (default: MAG254)" />
+                  <div style="font-size:12px;color:var(--muted);margin-top:4px">Default: MAG254</div>
                 </div>
                 <div>
-                  <label for="serial_number">Serial Number</label>
-                  <input id="serial_number" name="serial_number" placeholder="0000000000000" title="STB serial number" />
+                  <label for="serial_number">Serial Number <span style="color:var(--muted);font-size:.85em">(optional)</span></label>
+                  <input id="serial_number" name="serial_number" placeholder="0000000000000" title="STB serial number (default: 0000000000000)" />
+                  <div style="font-size:12px;color:var(--muted);margin-top:4px">Default: 0000000000000</div>
                 </div>
               </div>
-              <label for="device_id">Device ID</label>
-              <input id="device_id" name="device_id" placeholder="ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff" title="64-char hex device ID" />
-              <label for="device_id2">Device ID 2</label>
-              <input id="device_id2" name="device_id2" placeholder="ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff" title="64-char hex secondary device ID" />
-              <label for="signature">Signature</label>
-              <input id="signature" name="signature" placeholder="ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff" title="64-char hex signature" />
-              <div class="row two">
+              <label for="device_id">Device ID <span style="color:var(--muted);font-size:.85em">(optional)</span></label>
+              <input id="device_id" name="device_id" placeholder="64-character hex (auto-generated if empty)" maxlength="64" title="64-character hexadecimal device ID (leave empty for default)" />
+              <div style="font-size:12px;color:var(--muted);margin-top:4px">64-char hex, default: all f's</div>
+              
+              <label for="device_id2" style="margin-top:10px">Device ID 2 <span style="color:var(--muted);font-size:.85em">(optional)</span></label>
+              <input id="device_id2" name="device_id2" placeholder="64-character hex (auto-generated if empty)" maxlength="64" title="64-character hexadecimal secondary device ID (leave empty for default)" />
+              <div style="font-size:12px;color:var(--muted);margin-top:4px">64-char hex, default: all f's</div>
+              
+              <label for="signature" style="margin-top:10px">Signature <span style="color:var(--muted);font-size:.85em">(optional)</span></label>
+              <input id="signature" name="signature" placeholder="64-character hex (auto-generated if empty)" maxlength="64" title="64-character hexadecimal signature (leave empty for default)" />
+              <div style="font-size:12px;color:var(--muted);margin-top:4px">64-char hex, default: all f's</div>
+              
+              <div class="row two" style="margin-top:10px">
                 <div>
-                  <label for="timezone">Time Zone</label>
-                  <input id="timezone" name="timezone" placeholder="UTC" title="IANA timezone (e.g. UTC, America/New_York)" />
+                  <label for="timezone">Time Zone <span style="color:var(--muted);font-size:.85em">(optional)</span></label>
+                  <input id="timezone" name="timezone" placeholder="UTC" title="IANA timezone (e.g., UTC, America/New_York, Europe/London)" />
+                  <div style="font-size:12px;color:var(--muted);margin-top:4px">Default: UTC</div>
                 </div>
                 <div>
-                  <label for="watchdog_time">Watchdog Interval (min)</label>
-                  <input id="watchdog_time" name="watchdog_time" inputmode="numeric" placeholder="5" title="Watchdog keep-alive interval in minutes" />
+                  <label for="watchdog_time">Watchdog Interval (min) <span style="color:var(--muted);font-size:.85em">(optional)</span></label>
+                  <input id="watchdog_time" name="watchdog_time" inputmode="numeric" placeholder="5" title="Watchdog keep-alive interval in minutes (default: 5)" />
+                  <div style="font-size:12px;color:var(--muted);margin-top:4px">Default: 5 minutes</div>
                 </div>
               </div>
             </div>
@@ -930,6 +967,9 @@ func RegisterProfileHandlers(mux *http.ServeMux, onStart func()) {
               </form>
               <form method="post" action="#" style="margin:0" onsubmit="return false" title="Edit this profile (fills the form above)">
                 <button class="edit" type="button" data-action="edit" title="Edit this profile"><i class="fa-solid fa-pen"></i> <span class="btntext">Edit</span></button>
+              </form>
+              <form method="post" action="#" style="margin:0" onsubmit="return false" title="Quick edit advanced settings">
+                <button class="ghost" type="button" data-action="quickedit" title="Quick edit advanced settings"><i class="fa-solid fa-sliders"></i> <span class="btntext">Advanced</span></button>
               </form>
               <form method="post" action="/profiles/delete" style="margin:0" onsubmit="return confirm('Delete this profile? This cannot be undone.')" title="Removes this profile from the list">
                 <input type="hidden" name="id" value="{{.ID}}" />
@@ -979,6 +1019,76 @@ func RegisterProfileHandlers(mux *http.ServeMux, onStart func()) {
 		</form>
 		<div class="footnote">Tip: Leave a box empty if you don't want to change that setting.</div>
 	  </div>
+
+  <!-- Quick Edit Advanced Modal -->
+  <div id="quickEditModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:1000;align-items:center;justify-content:center;padding:20px">
+    <div style="background:linear-gradient(180deg,rgba(17,24,21,.98),rgba(13,20,16,.96));border:1px solid var(--border,#1f2e23);border-radius:12px;padding:24px;max-width:480px;width:100%;max-height:90vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)">
+      <h3 style="margin:0 0 16px 0;font-size:18px;color:var(--brand-light,#5fb970)"><i class="fa-solid fa-sliders"></i> Quick Edit Advanced Settings</h3>
+      <p style="color:var(--muted,#9aaa9a);font-size:13px;margin:-10px 0 16px 0">Leave empty to use defaults. Only change if your provider requires specific values.</p>
+      <form id="quickEditForm" method="post" action="/profiles">
+        <input type="hidden" id="qe_edit_id" name="edit_id" value="" />
+        <input type="hidden" id="qe_name" name="name" value="" />
+        <input type="hidden" id="qe_portal" name="portal" value="" />
+        <input type="hidden" id="qe_mac" name="mac" value="" />
+        <input type="hidden" id="qe_hls_port" name="hls_port" value="" />
+        <input type="hidden" id="qe_proxy_port" name="proxy_port" value="" />
+
+        <div class="row two">
+          <div>
+            <label>Username <span style="color:var(--muted);font-size:.85em">(optional)</span></label>
+            <input id="qe_username" name="username" placeholder="Leave blank for Device ID auth" />
+          </div>
+          <div>
+            <label>Password <span style="color:var(--muted);font-size:.85em">(optional)</span></label>
+            <input id="qe_password" name="password" type="password" placeholder="Leave blank for Device ID auth" />
+          </div>
+        </div>
+
+        <div class="row two">
+          <div>
+            <label>STB Model <span style="color:var(--muted);font-size:.85em">(optional)</span></label>
+            <input id="qe_model" name="model" placeholder="MAG254" />
+            <div style="font-size:11px;color:var(--muted)">Default: MAG254</div>
+          </div>
+          <div>
+            <label>Serial Number <span style="color:var(--muted);font-size:.85em">(optional)</span></label>
+            <input id="qe_serial_number" name="serial_number" placeholder="0000000000000" />
+            <div style="font-size:11px;color:var(--muted)">Default: 0000000000000</div>
+          </div>
+        </div>
+
+        <label>Device ID <span style="color:var(--muted);font-size:.85em">(optional)</span></label>
+        <input id="qe_device_id" name="device_id" placeholder="64-character hex (auto-generated if empty)" maxlength="64" />
+        <div style="font-size:11px;color:var(--muted);margin-bottom:12px">64-char hex, default: all f's</div>
+
+        <label>Device ID 2 <span style="color:var(--muted);font-size:.85em">(optional)</span></label>
+        <input id="qe_device_id2" name="device_id2" placeholder="64-character hex (auto-generated if empty)" maxlength="64" />
+        <div style="font-size:11px;color:var(--muted);margin-bottom:12px">64-char hex, default: all f's</div>
+
+        <label>Signature <span style="color:var(--muted);font-size:.85em">(optional)</span></label>
+        <input id="qe_signature" name="signature" placeholder="64-character hex (auto-generated if empty)" maxlength="64" />
+        <div style="font-size:11px;color:var(--muted);margin-bottom:12px">64-char hex, default: all f's</div>
+
+        <div class="row two">
+          <div>
+            <label>Time Zone <span style="color:var(--muted);font-size:.85em">(optional)</span></label>
+            <input id="qe_timezone" name="timezone" placeholder="UTC" />
+            <div style="font-size:11px;color:var(--muted)">Default: UTC</div>
+          </div>
+          <div>
+            <label>Watchdog (min) <span style="color:var(--muted);font-size:.85em">(optional)</span></label>
+            <input id="qe_watchdog_time" name="watchdog_time" inputmode="numeric" placeholder="5" />
+            <div style="font-size:11px;color:var(--muted)">Default: 5 minutes</div>
+          </div>
+        </div>
+
+        <div style="display:flex;gap:10px;justify-content:space-between;margin-top:20px">
+          <button type="button" id="qeCancel" class="ghost" style="background:transparent;border:1px solid var(--border);color:var(--text)">Cancel</button>
+          <button type="submit" class="primary"><i class="fa-regular fa-floppy-disk"></i> Save Changes</button>
+        </div>
+      </form>
+    </div>
+  </div>
   </div>
 
   <script>
@@ -1034,13 +1144,21 @@ func RegisterProfileHandlers(mux *http.ServeMux, onStart func()) {
       if(!/^https?:\/\//i.test(s)) s = 'http://' + s;
       try{
         const u = new URL(s);
-        let p = (u.pathname||'/').trim();
-        if(!p || p === '/') p = '/portal.php';
-        if(!/\/portal\.php$/i.test(p) && !/\/load\.php$/i.test(p)){
-          if(/\.php$/i.test(p)) p = '/portal.php';
-          else p = (p.replace(/\/+$/,'') || '') + '/portal.php';
+        let p = (u.pathname||'/').trim().toLowerCase();
+        // Check if user already specified a valid endpoint
+        const hasValidEndpoint = /\/(portal|load)\.php$/i.test(p);
+        if(!p || p === '/'){
+          u.pathname = '/portal.php';
+        } else if(!hasValidEndpoint){
+          if(/\.php$/i.test(p)){
+            // Replace unknown .php with portal.php in same directory
+            const dir = p.substring(0, p.lastIndexOf('/')) || '/';
+            u.pathname = dir + '/portal.php';
+          } else {
+            u.pathname = p.replace(/\/+$/, '') + '/portal.php';
+          }
         }
-        u.pathname = p;
+        // If hasValidEndpoint, preserve exactly what user specified
         return u.toString();
       }catch(e){
         return s;
@@ -1208,6 +1326,64 @@ func RegisterProfileHandlers(mux *http.ServeMux, onStart func()) {
     setInterval(poll, 1200);
     poll();
 
+	// Quick Edit Modal handlers
+	const qeModal = document.getElementById('quickEditModal');
+	const qeForm = document.getElementById('quickEditForm');
+	const qeCancel = document.getElementById('qeCancel');
+
+	// Handle quick edit button clicks
+	document.getElementById('profiles').addEventListener('click', (e)=>{
+		const btn = e.target && e.target.closest ? e.target.closest('button[data-action="quickedit"]') : null;
+		if(!btn) return;
+		const card = btn.closest('.p');
+		if(!card) return;
+
+		// Stop the profile first
+		const id = card.getAttribute('data-id')||'';
+		if(id){
+			fetch('/api/profiles/stop', {
+				method: 'POST',
+				headers: {'Content-Type':'application/x-www-form-urlencoded'},
+				body: 'id=' + encodeURIComponent(id)
+			}).catch(()=>{});
+		}
+
+		// Fill the quick edit form
+		document.getElementById('qe_edit_id').value = id;
+		document.getElementById('qe_name').value = card.getAttribute('data-name')||'';
+		document.getElementById('qe_portal').value = card.getAttribute('data-portal')||'';
+		document.getElementById('qe_mac').value = card.getAttribute('data-mac')||'';
+		document.getElementById('qe_hls_port').value = card.getAttribute('data-hls')||'';
+		document.getElementById('qe_proxy_port').value = card.getAttribute('data-proxy')||'';
+		document.getElementById('qe_username').value = card.getAttribute('data-username')||'';
+		document.getElementById('qe_password').value = card.getAttribute('data-password')||'';
+		document.getElementById('qe_model').value = card.getAttribute('data-model')||'';
+		document.getElementById('qe_serial_number').value = card.getAttribute('data-serial')||'';
+		document.getElementById('qe_device_id').value = card.getAttribute('data-deviceid')||'';
+		document.getElementById('qe_device_id2').value = card.getAttribute('data-deviceid2')||'';
+		document.getElementById('qe_signature').value = card.getAttribute('data-signature')||'';
+		document.getElementById('qe_timezone').value = card.getAttribute('data-timezone')||'';
+		document.getElementById('qe_watchdog_time').value = card.getAttribute('data-watchdog')||'';
+
+		// Show modal
+		qeModal.style.display = 'flex';
+		showToast('Quick Edit', 'Profile stopped for editing. Make changes and save.');
+	});
+
+	// Close modal on cancel
+	qeCancel.addEventListener('click', ()=>{
+		qeModal.style.display = 'none';
+	});
+
+	// Close modal on background click
+	qeModal.addEventListener('click', (e)=>{
+		if(e.target === qeModal) qeModal.style.display = 'none';
+	});
+
+	// Close modal after form submission (success will reload)
+	qeForm.addEventListener('submit', ()=>{
+		qeModal.style.display = 'none';
+	});
 	// Save advanced settings
 	document.getElementById('saveSettings').addEventListener('click', async ()=>{
 		const delay=document.getElementById('s_delay').value||'';
@@ -1233,6 +1409,12 @@ func RegisterProfileHandlers(mux *http.ServeMux, onStart func()) {
       </div>
       <a class="pill pilllink" href="/logs" target="_blank" rel="noopener" title="Open live logs (helps with troubleshooting)">
         <i class="fa-regular fa-file-lines"></i> Logs
+      </a>
+      <a class="pill pilllink" href="/account" title="Account settings and logout">
+        <i class="fa-solid fa-user-shield"></i> {{if .CurrentUser}}{{.CurrentUser}}{{else}}Account{{end}}
+      </a>
+      <a class="pill pilllink" href="https://tally.so/r/9qWoKX" target="_blank" rel="noopener" title="Submit feedback or report issues">
+        <i class="fa-solid fa-comment-dots"></i> Feedback
       </a>
       <a class="pill pilllink" href="https://github.com/kidpoleon/stalkerhek" target="_blank" rel="noopener" title="View source and report issues">
         <i class="fa-brands fa-github"></i> GitHub
@@ -1305,7 +1487,7 @@ func RegisterProfileHandlers(mux *http.ServeMux, onStart func()) {
     .small{font-size:12px;color:var(--muted)}
     .table{border:1px solid var(--border);border-radius:16px;overflow:hidden}
     .tableWrap{overflow:auto;max-width:100%}
-    .thead,.trow{display:grid;grid-template-columns: minmax(260px,1fr) minmax(160px,220px) minmax(140px,160px);gap:10px;align-items:center}
+    .thead,.trow{display:grid;grid-template-columns: 42px minmax(260px,1fr) minmax(140px,200px) minmax(120px,140px);gap:10px;align-items:center}
     .thead{background:rgba(31,46,35,.25);padding:10px 12px;color:#cfe0cf;font-size:12px;text-transform:uppercase;letter-spacing:.6px}
     .trow{padding:10px 12px;border-top:1px solid rgba(31,46,35,.55);cursor:pointer}
     .trow:hover{background:rgba(45,122,78,.08)}
@@ -1353,7 +1535,7 @@ func RegisterProfileHandlers(mux *http.ServeMux, onStart func()) {
 	.tip .lines{display:grid;gap:4px}
 	.tip .lines div{color:#cfe0cf;font-size:12px;overflow-wrap:anywhere}
 	@media(max-width:780px){
-	  .thead,.trow{grid-template-columns: minmax(260px,1fr) minmax(140px,200px) minmax(140px,160px)}
+	  .thead,.trow{grid-template-columns: 42px minmax(260px,1fr) minmax(140px,200px) minmax(120px,140px)}
 	}
 	@media(max-width:520px){
 	  .thead,.trow{min-width:720px}
@@ -1501,7 +1683,7 @@ func RegisterProfileHandlers(mux *http.ServeMux, onStart func()) {
 
         <div class="table" style="margin-top:10px">
 		  <div class="tableWrap" id="tableWrap" tabindex="0" role="grid" aria-label="Channels table" aria-describedby="tableHelp">
-			<div class="thead" style="grid-template-columns: 42px minmax(260px,1fr) minmax(160px,220px) minmax(140px,160px)">
+			<div class="thead" style="grid-template-columns: 42px minmax(260px,1fr) minmax(140px,200px) minmax(120px,140px)">
 			  <div>Select</div><div>Channel</div><div>Genre</div><div style="text-align:right">Status</div>
 			</div>
 			<div id="rows"></div>
@@ -1526,10 +1708,10 @@ func RegisterProfileHandlers(mux *http.ServeMux, onStart func()) {
       const fd = new URLSearchParams();
       Object.keys(obj||{}).forEach(k=>fd.append(k, obj[k]));
       const res = await fetch(url, {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:fd});
-      if(!res.ok){ throw new Error(await res.text()); }
-      return res.json();
+      if(!res.ok) throw new Error((await res.text())||res.statusText);
+      if((res.headers.get('content-type')||'').includes('application/json')) return res.json();
+      return res.text();
     };
-
 	const showErr = (msg)=>{
 		$('errMsg').textContent = msg || 'Unknown error';
 		$('errBanner').style.display = 'block';
@@ -1585,7 +1767,7 @@ func RegisterProfileHandlers(mux *http.ServeMux, onStart func()) {
 	const skeletonRows = (n)=>{
 		const arr=[];
 		for(let i=0;i<n;i++){
-			arr.push('<div class="trow" aria-hidden="true" style="grid-template-columns:42px minmax(260px,1fr) minmax(160px,220px) minmax(140px,160px)"><div style="display:flex;justify-content:center"><span class="ck" style="opacity:.2"><input type="checkbox" disabled></span></div><div><div class="name" style="height:14px;width:46%;background:rgba(31,46,35,.35);border-radius:8px"></div><div class="small" style="height:12px;width:72%;margin-top:8px;background:rgba(31,46,35,.22);border-radius:8px"></div></div><div><div class="small" style="height:12px;width:40%;background:rgba(31,46,35,.22);border-radius:8px"></div><div class="small" style="height:12px;width:28%;margin-top:8px;background:rgba(31,46,35,.18);border-radius:8px"></div></div><div class="toggle"><div class="pill" style="opacity:.25">…</div></div></div>');
+			arr.push('<div class="trow" aria-hidden="true" style="grid-template-columns:42px minmax(260px,1fr) minmax(160px,220px) 100px minmax(140px,160px)"><div style="display:flex;justify-content:center"><span class="ck" style="opacity:.2"><input type="checkbox" disabled></span></div><div><div class="name" style="height:14px;width:46%;background:rgba(31,46,35,.35);border-radius:8px"></div><div class="small" style="height:12px;width:72%;margin-top:8px;background:rgba(31,46,35,.22);border-radius:8px"></div></div><div><div class="small" style="height:12px;width:40%;background:rgba(31,46,35,.22);border-radius:8px"></div><div class="small" style="height:12px;width:28%;margin-top:8px;background:rgba(31,46,35,.18);border-radius:8px"></div></div><div class="toggle"><div class="pill" style="opacity:.25">…</div></div></div>');
 		}
 		return arr.join('');
 	};
@@ -2121,9 +2303,12 @@ func RegisterProfileHandlers(mux *http.ServeMux, onStart func()) {
         tr.setAttribute('role', 'row');
         tr.setAttribute('tabindex', '-1');
         tr.setAttribute('aria-selected', 'false');
-        tr.style.gridTemplateColumns = '42px minmax(260px,1fr) minmax(160px,220px) minmax(140px,160px)';
+        tr.style.gridTemplateColumns = '42px minmax(260px,1fr) minmax(140px,200px) minmax(120px,140px)';
         const c1 = document.createElement('div');
         c1.setAttribute('role','gridcell');
+        c1.style.display='flex';
+        c1.style.alignItems='center';
+        c1.style.justifyContent='center';
         const ckWrap = document.createElement('span');
         ckWrap.className='ck';
         const chk = document.createElement('input');
@@ -2141,10 +2326,11 @@ func RegisterProfileHandlers(mux *http.ServeMux, onStart func()) {
         };
         ckWrap.appendChild(chk);
         c1.appendChild(ckWrap);
-        c1.style.display='flex';
-        c1.style.justifyContent='center';
         const c2 = document.createElement('div');
         c2.setAttribute('role','gridcell');
+        c2.style.display='flex';
+        c2.style.flexDirection='column';
+        c2.style.justifyContent='center';
         c2.innerHTML = '<div class="name">'+(it.title||'').replace(/</g,'&lt;')+'</div><div class="small mono">'+(it.cmd||'').replace(/</g,'&lt;')+'</div>';
         const cGenre = document.createElement('div');
         cGenre.setAttribute('role','gridcell');
@@ -2158,57 +2344,57 @@ func RegisterProfileHandlers(mux *http.ServeMux, onStart func()) {
         cState.appendChild(pill);
         tr.appendChild(c1);
         tr.appendChild(c2);
-		tr.appendChild(cGenre);
+        tr.appendChild(cGenre);
         tr.appendChild(cState);
-		tr.onfocus = ()=>{ try{ setActiveRow(idx,false); }catch(e){} };
-		tr.onmouseenter = (ev)=>{
-			try{ setActiveRow(idx,false); }catch(e){}
-			hoverStart(async (tok)=>{
-				const title = it.title||'';
-				const cmd = it.cmd||'';
-				const baseLines = [
-					(it.enabled ? 'Enabled: yes' : 'Enabled: no'),
-					'Genre: '+(it.genre||'Other'),
-					'CMD: '+cmd,
-					'Probe: pending…'
-				];
-				showTip('Channel: '+title, baseLines, ev);
-				const cacheKey = String(state.id)+'::'+String(cmd);
-				const cached = channelProbeCache.get(cacheKey);
-				const now = Date.now();
-				if(cached && (now - cached.t) < 45_000){
-					if(tok !== __hoverToken) return;
-					const lines = baseLines.slice(0,3).concat(cached.lines||[]);
-					showTip('Channel: '+title, lines, ev);
-					return;
-				}
-				try{
-					const u = new URLSearchParams({id: String(state.id), cmd: String(cmd)});
-					const j = await getJson('/api/filters/probe_channel?'+u.toString());
-					const lines = [];
-					if(j && j.error){
-						lines.push('Probe: failed');
-						lines.push(String(j.error));
-					}else{
-						lines.push('Probe: '+(j && j.ok ? 'ok' : 'failed'));
-						if(j && j.create_link_ms!=null) lines.push('create_link: '+j.create_link_ms+' ms');
-						if(j && j.stream_status!=null) lines.push('stream: HTTP '+j.stream_status);
-						if(j && j.content_type) lines.push('type: '+j.content_type);
-					}
-					channelProbeCache.set(cacheKey, {t: now, lines});
-					if(tok !== __hoverToken) return;
-					showTip('Channel: '+title, baseLines.slice(0,3).concat(lines), ev);
-				}catch(e){
-					const lines = ['Probe: failed', String(e.message||e)];
-					channelProbeCache.set(cacheKey, {t: now, lines});
-					if(tok !== __hoverToken) return;
-					showTip('Channel: '+title, baseLines.slice(0,3).concat(lines), ev);
-				}
-			});
-		};
-		tr.onmousemove = (ev)=>{ if($('tip').style.display==='block') showTip($('tipTitle').textContent, Array.from($('tipLines').children).map(n=>n.textContent||''), ev); };
-		tr.onmouseleave = ()=>hoverStop();
-		tr.onclick = ()=>{ try{ setActiveRow(idx,false); }catch(e){}; openDrawer(it); };
+        tr.onfocus = ()=>{ try{ setActiveRow(idx,false); }catch(e){} };
+        tr.onmouseenter = (ev)=>{
+          try{ setActiveRow(idx,false); }catch(e){}
+          hoverStart(async (tok)=>{
+            const title = it.title||'';
+            const cmd = it.cmd||'';
+            const baseLines = [
+              (it.enabled ? 'Enabled: yes' : 'Enabled: no'),
+              'Genre: '+(it.genre||'Other'),
+              'CMD: '+cmd,
+              'Probe: pending…'
+            ];
+            showTip('Channel: '+title, baseLines, ev);
+            const cacheKey = String(state.id)+'::'+String(cmd);
+            const cached = channelProbeCache.get(cacheKey);
+            const now = Date.now();
+            if(cached && (now - cached.t) < 45_000){
+              if(tok !== __hoverToken) return;
+              const lines = baseLines.slice(0,3).concat(cached.lines||[]);
+              showTip('Channel: '+title, lines, ev);
+              return;
+            }
+            try{
+              const u = new URLSearchParams({id: String(state.id), cmd: String(cmd)});
+              const j = await getJson('/api/filters/probe_channel?'+u.toString());
+              const lines = [];
+              if(j && j.error){
+                lines.push('Probe: failed');
+                lines.push(String(j.error));
+              }else{
+                lines.push('Probe: '+(j && j.ok ? 'ok' : 'failed'));
+                if(j && j.create_link_ms!=null) lines.push('create_link: '+j.create_link_ms+' ms');
+                if(j && j.stream_status!=null) lines.push('stream: HTTP '+j.stream_status);
+                if(j && j.content_type) lines.push('type: '+j.content_type);
+              }
+              channelProbeCache.set(cacheKey, {t: now, lines});
+              if(tok !== __hoverToken) return;
+              showTip('Channel: '+title, baseLines.slice(0,3).concat(lines), ev);
+            }catch(e){
+              const lines = ['Probe: failed', String(e.message||e)];
+              channelProbeCache.set(cacheKey, {t: now, lines});
+              if(tok !== __hoverToken) return;
+              showTip('Channel: '+title, baseLines.slice(0,3).concat(lines), ev);
+            }
+          });
+        };
+        tr.onmousemove = (ev)=>{ if($('tip').style.display==='block') showTip($('tipTitle').textContent, Array.from($('tipLines').children).map(n=>n.textContent||''), ev); };
+        tr.onmouseleave = ()=>hoverStop();
+        tr.onclick = ()=>{ try{ setActiveRow(idx,false); }catch(e){}; openDrawer(it); };
         $('rows').appendChild(tr);
       });
 		try{ setActiveRow(__activeRow,false); }catch(e){}

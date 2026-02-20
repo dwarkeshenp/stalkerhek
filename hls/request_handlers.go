@@ -45,18 +45,21 @@ func (s *serverState) channelHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Lock channel's mux
+	// Lock channel's mux for validation only
 	cr.ChannelRef.Mux.Lock()
 
 	// Keep track on channel access time
 	if err = cr.ChannelRef.validate(); err != nil {
+		log.Printf("[ERROR] Channel validation failed for %s: %v", cr.Title, err)
 		cr.ChannelRef.Mux.Unlock()
-		http.Error(w, "internal server error", http.StatusInternalServerError)
-		log.Println(err)
+		http.Error(w, "channel unavailable", http.StatusServiceUnavailable)
 		return
 	}
 
-	// Handle content
+	// Release lock before long-running streaming to allow parallel streams
+	cr.ChannelRef.Mux.Unlock()
+
+	// Handle content without holding the lock
 	handleContent(cr)
 }
 
@@ -142,7 +145,7 @@ func (s *serverState) rootHandler(w http.ResponseWriter, r *http.Request) {
     if err = cr.ChannelRef.validate(); err != nil {
         cr.ChannelRef.Mux.Unlock()
         http.Error(w, "internal server error", http.StatusInternalServerError)
-        log.Println(err)
+        log.Printf("[ERROR] Channel validation failed for %s: %v", cr.Title, err)
         return
     }
 

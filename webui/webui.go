@@ -1,8 +1,8 @@
 package webui
 
 import (
-	"context"
 	"compress/gzip"
+	"context"
 	"html/template"
 	"log"
 	"net/http"
@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-    "github.com/kidpoleon/stalkerhek/stalker"
+	"github.com/kidpoleon/stalkerhek/stalker"
 )
 
 type uiState struct {
@@ -103,14 +103,18 @@ func StartWithContext(ctx context.Context, cfg *stalker.Config, ready chan struc
     // mount per-profile channel/genre filter endpoints
     RegisterFilterHandlers(mux)
 
-    // mount health/metrics/info endpoints
-    RegisterHealthHandlers(mux)
+    // Register authentication handlers
+    RegisterAuthHandlers(mux)
 
-    // middleware to count requests/errors
-    var handler http.Handler = mux
+    // Apply authentication middleware to all handlers
+    var finalHandler http.Handler = mux
+    finalHandler = AuthMiddleware(mux)
+
+    // middleware to count requests/errors and auth
+    var handler http.Handler = finalHandler
     handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
         IncrementRequests()
-        mux.ServeHTTP(w, r)
+        finalHandler.ServeHTTP(w, r)
     })
     if os.Getenv("STALKERHEK_WEBUI_GZIP") == "1" {
         handler = gzipMiddleware(handler)

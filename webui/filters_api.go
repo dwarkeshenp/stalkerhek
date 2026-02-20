@@ -96,11 +96,11 @@ type genreInfo struct {
 	}
 
 type channelInfo struct {
-	Title     string `json:"title"`
-	CMD       string `json:"cmd"`
-	GenreID   string `json:"genre_id"`
-	Genre     string `json:"genre"`
-	Enabled   bool   `json:"enabled"`
+	Title         string `json:"title"`
+	CMD           string `json:"cmd"`
+	GenreID       string `json:"genre_id"`
+	Genre         string `json:"genre"`
+	Enabled       bool   `json:"enabled"`
 }
 
 type channelsResp struct {
@@ -346,13 +346,27 @@ func RegisterFilterHandlers(mux *http.ServeMux) {
 
 		filtered := make([]channelInfo, 0, lim)
 		total := 0
-		for _, title := range keys {
+		// First pass: collect all matching channels with their index
+		type channelMatch struct {
+			idx int
+			ch  *stalker.Channel
+		}
+		matches := make([]channelMatch, 0)
+		for idx, title := range keys {
 			ch := chs[title]
 			if ch == nil {
 				continue
 			}
-			if genreID != "" && strings.TrimSpace(ch.GenreID) != genreID {
-				continue
+			if genreID != "" {
+				chGID := strings.TrimSpace(ch.GenreID)
+				// "Other" is a special case that matches empty/blank GenreID
+				if genreID == "Other" {
+					if chGID != "" && chGID != "Other" {
+						continue
+					}
+				} else if chGID != genreID {
+					continue
+				}
 			}
 			if query != "" && !strings.Contains(strings.ToLower(title), query) {
 				continue
@@ -365,13 +379,36 @@ func RegisterFilterHandlers(mux *http.ServeMux) {
 				continue
 			}
 			total++
-			if total <= off {
+			matches = append(matches, channelMatch{idx: idx, ch: ch})
+		}
+
+		// Only get channels for the current page
+		pageMatches := make([]channelMatch, 0, lim)
+		for i, m := range matches {
+			if i < off {
 				continue
 			}
-			if len(filtered) >= lim {
-				continue
+			if len(pageMatches) >= lim {
+				break
 			}
-			filtered = append(filtered, channelInfo{Title: title, CMD: ch.CMD, GenreID: ch.GenreID, Genre: ch.Genre(), Enabled: allowed})
+			pageMatches = append(pageMatches, m)
+		}
+		
+		// Build result
+		for _, m := range pageMatches {
+			ch := m.ch
+			title := ch.Title
+			if title == "" {
+				title = "Unknown"
+			}
+			
+			filtered = append(filtered, channelInfo{
+				Title:   title,
+				CMD:     ch.CMD,
+				GenreID: ch.GenreID,
+				Genre:   ch.Genre(),
+				Enabled: filterstore.IsAllowed(pid, ch),
+			})
 		}
 
 		_ = json.NewEncoder(w).Encode(channelsResp{Total: total, Items: filtered})

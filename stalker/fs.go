@@ -88,39 +88,57 @@ func ReadConfig(path *string) (*Config, error) {
 var regexMAC = regexp.MustCompile(`^[A-F0-9]{2}:[A-F0-9]{2}:[A-F0-9]{2}:[A-F0-9]{2}:[A-F0-9]{2}:[A-F0-9]{2}$`)
 var regexTimezone = regexp.MustCompile(`^[a-zA-Z]+/[a-zA-Z]+$`)
 
+// default values for optional portal parameters
+const (
+	defaultModel        = "MAG254"
+	defaultSerialNumber = "0000000000000"
+	defaultDeviceID     = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+	defaultDeviceID2    = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+	defaultSignature    = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+	defaultTimeZone     = "UTC"
+	defaultWatchDogTime = 5
+)
+
+// applyPortalDefaults sets default values for optional portal parameters
+func applyPortalDefaults(p *Portal) {
+	if p.Model == "" {
+		p.Model = defaultModel
+	}
+	if p.SerialNumber == "" {
+		p.SerialNumber = defaultSerialNumber
+	}
+	if p.DeviceID == "" {
+		p.DeviceID = defaultDeviceID
+	}
+	if p.DeviceID2 == "" {
+		p.DeviceID2 = defaultDeviceID2
+	}
+	if p.Signature == "" {
+		p.Signature = defaultSignature
+	}
+	if p.TimeZone == "" {
+		p.TimeZone = defaultTimeZone
+	}
+	if p.WatchDogTime == 0 {
+		p.WatchDogTime = defaultWatchDogTime
+	}
+}
+
 func (c *Config) validateWithDefaults() error {
 	c.Portal.MAC = strings.ToUpper(c.Portal.MAC)
 
-	if c.Portal.Model == "" {
-		return errors.New("empty model")
-	}
+	// Apply defaults for all optional parameters
+	applyPortalDefaults(c.Portal)
 
-	if c.Portal.SerialNumber == "" {
-		return errors.New("empty serial number (sn)")
-	}
-
-	if c.Portal.DeviceID == "" {
-		return errors.New("empty device_id")
-	}
-
-	if c.Portal.DeviceID2 == "" {
-		return errors.New("empty device_id2")
-	}
-
-	// Signature can be empty and it's fine
-
+	// Only MAC and Location are truly required
 	if !regexMAC.MatchString(c.Portal.MAC) {
 		return errors.New("invalid MAC '" + c.Portal.MAC + "'")
 	}
 
-	/* Username and password fields are optional */
+	/* Username, password, timezone and all other portal params are optional - defaults applied above */
 
 	if c.Portal.Location == "" {
 		return errors.New("empty portal url")
-	}
-
-	if !regexTimezone.MatchString(c.Portal.TimeZone) {
-		return errors.New("invalid timezone '" + c.Portal.TimeZone + "'")
 	}
 
 	if !c.HLS.Enabled && !c.Proxy.Enabled {
@@ -144,7 +162,10 @@ func (c *Config) validateWithDefaults() error {
 		log.Println("No token given, using random one")
 	}
 
-	if c.Portal.WatchDogTime == 1 {
+	if c.Portal.WatchDogTime == 0 {
+		c.Portal.WatchDogTime = 5
+		log.Println("Using default Watchdog update interval = 5 minutes")
+	} else if c.Portal.WatchDogTime == 1 {
 		c.Portal.WatchDogTime = 2
 		log.Println("Using Watchdog update interval = ", c.Portal.WatchDogTime)
 	}
