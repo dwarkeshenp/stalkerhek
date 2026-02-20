@@ -14,6 +14,8 @@ services:
     # This volume persists your profiles between restarts.
     environment:
       - STALKERHEK_PROFILES_FILE=/data/profiles.json
+      - STALKERHEK_AUTH_FILE=/data/auth.json
+      - STALKERHEK_FILTERS_FILE=/data/filters.json
     volumes:
       - ./data:/data
 
@@ -31,5 +33,7 @@ services:
 #       - "6800:6800"  # Proxy (example)
 #     environment:
 #       - STALKERHEK_PROFILES_FILE=/data/profiles.json
+#       - STALKERHEK_AUTH_FILE=/data/auth.json
+#       - STALKERHEK_FILTERS_FILE=/data/filters.json
 #     volumes:
 #       - ./data:/data

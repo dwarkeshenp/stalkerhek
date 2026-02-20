@@ -57,6 +57,11 @@ stalkerhek.yaml
 *.env
 
 ########################
+# CI / GitHub Actions #
+########################
+.github/
+
+########################
 # Editor / OS artifacts #
 ########################
 .vscode/

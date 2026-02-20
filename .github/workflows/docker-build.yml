@@ -6,6 +6,9 @@ on:
     tags: [ 'v*' ]
   pull_request:
     branches: [ main, master ]
+  schedule:
+    # Build every 6 hours to ensure updates
+    - cron: '0 */6 * * *'
 
 jobs:
   build:
