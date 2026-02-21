@@ -187,7 +187,7 @@ func (s *serverState) requestHandler(w http.ResponseWriter, r *http.Request) {
 
 		// Find Stalker channel
 		channel, found := s.channels[tagCMD]
-		if !found {
+		if !found || channel == nil {
 			log.Println("STB requested 'create_link', but gave invalid CMD:", tagCMD)
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return

@@ -10,11 +10,15 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
 
 var playlistDelaySegments atomic.Int32
+
+// clientMu protects httpClient transport updates
+var clientMu sync.RWMutex
 
 const userAgent = "Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 4 rev: 2116 Mobile Safari/533.3"
 
@@ -72,6 +76,8 @@ func UpdateResponseHeaderTimeout(d time.Duration) {
 	if d <= 0 {
 		return
 	}
+	clientMu.Lock()
+	defer clientMu.Unlock()
 	if tr, ok := httpClient.Transport.(*http.Transport); ok {
 		tr.ResponseHeaderTimeout = d
 	}
@@ -81,6 +87,8 @@ func UpdateMaxIdleConnsPerHost(n int) {
 	if n <= 0 {
 		return
 	}
+	clientMu.Lock()
+	defer clientMu.Unlock()
 	if tr, ok := httpClient.Transport.(*http.Transport); ok {
 		tr.MaxIdleConnsPerHost = n
 	}
@@ -149,7 +157,11 @@ func response(link string) (*http.Response, error) {
 		req.Header.Set("Origin", u.Scheme+"://"+u.Host)
 	}
 
-	resp, err := httpClient.Do(req)
+	clientMu.RLock()
+	client := httpClient
+	clientMu.RUnlock()
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}

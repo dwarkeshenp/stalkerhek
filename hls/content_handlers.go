@@ -37,7 +37,7 @@ func handleContent(cr *ContentRequest) {
 func handleContentUnknown(cr *ContentRequest) {
 	resp, err := response(cr.ChannelRef.Link)
 	if err != nil {
-		cr.ChannelRef.Mux.Unlock()
+		// Don't unlock here - the caller (handleContent or channelHandler) owns the lock
 		http.Error(cr.ResponseWriter, "internal server error", http.StatusInternalServerError)
 		log.Println(err)
 		return

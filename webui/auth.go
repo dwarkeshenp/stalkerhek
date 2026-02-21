@@ -35,6 +35,12 @@ type Session struct {
 	ExpiresAt time.Time `json:"expires_at"`
 }
 
+// passwordResetToken represents a token with expiration
+type passwordResetToken struct {
+	Username  string
+	ExpiresAt time.Time
+}
+
 var (
 	// users holds registered users (username -> User)
 	users   = make(map[string]User)
@@ -44,8 +50,8 @@ var (
 	sessions   = make(map[string]Session)
 	sessionsMu sync.RWMutex
 
-	// passwordResetTokens holds temporary tokens for password reset (token -> username)
-	passwordResetTokens   = make(map[string]string)
+	// passwordResetTokens holds temporary tokens for password reset (token -> passwordResetToken)
+	passwordResetTokens   = make(map[string]passwordResetToken)
 	passwordResetTokensMu sync.RWMutex
 
 	// sessionCookieName is the name of the session cookie
@@ -1088,16 +1094,39 @@ func saveUsers() error {
 
 // Password reset token functions
 func isValidResetToken(token string) bool {
-	passwordResetTokensMu.RLock()
-	defer passwordResetTokensMu.RUnlock()
-	_, exists := passwordResetTokens[token]
-	return exists
+	passwordResetTokensMu.Lock()
+	defer passwordResetTokensMu.Unlock()
+	
+	t, exists := passwordResetTokens[token]
+	if !exists {
+		return false
+	}
+	
+	// Check if token has expired
+	if time.Now().After(t.ExpiresAt) {
+		delete(passwordResetTokens, token)
+		return false
+	}
+	
+	return true
 }
 
 func getUsernameFromResetToken(token string) string {
-	passwordResetTokensMu.RLock()
-	defer passwordResetTokensMu.RUnlock()
-	return passwordResetTokens[token]
+	passwordResetTokensMu.Lock()
+	defer passwordResetTokensMu.Unlock()
+	
+	t, exists := passwordResetTokens[token]
+	if !exists {
+		return ""
+	}
+	
+	// Check if token has expired
+	if time.Now().After(t.ExpiresAt) {
+		delete(passwordResetTokens, token)
+		return ""
+	}
+	
+	return t.Username
 }
 
 func invalidateResetToken(token string) {
@@ -1106,11 +1135,14 @@ func invalidateResetToken(token string) {
 	passwordResetTokensMu.Unlock()
 }
 
-// generateResetToken creates a new password reset token for a user
+// generateResetToken creates a new password reset token for a user (expires in 1 hour)
 func generateResetToken(username string) string {
 	token := generateToken()
 	passwordResetTokensMu.Lock()
-	passwordResetTokens[token] = username
+	passwordResetTokens[token] = passwordResetToken{
+		Username:  username,
+		ExpiresAt: time.Now().Add(1 * time.Hour),
+	}
 	passwordResetTokensMu.Unlock()
 	return token
 }

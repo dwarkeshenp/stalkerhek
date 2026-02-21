@@ -8,12 +8,16 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kidpoleon/stalkerhek/stalker"
 )
 
 const userAgent = "Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 4 rev: 2116 Mobile Safari/533.3"
+
+// clientMu protects HTTPClient transport updates
+var clientMu sync.RWMutex
 
 // HTTPClient with connection pooling for proxy package
 var HTTPClient = &http.Client{
@@ -41,6 +45,8 @@ func UpdateResponseHeaderTimeout(d time.Duration) {
 	if d <= 0 {
 		return
 	}
+	clientMu.Lock()
+	defer clientMu.Unlock()
 	if tr, ok := HTTPClient.Transport.(*http.Transport); ok {
 		tr.ResponseHeaderTimeout = d
 	}
@@ -50,6 +56,8 @@ func UpdateMaxIdleConnsPerHost(n int) {
 	if n <= 0 {
 		return
 	}
+	clientMu.Lock()
+	defer clientMu.Unlock()
 	if tr, ok := HTTPClient.Transport.(*http.Transport); ok {
 		tr.MaxIdleConnsPerHost = n
 	}
@@ -107,7 +115,11 @@ func getRequest(link string, originalRequest *http.Request, cfg *stalker.Config)
 		req.Header.Set("Pragma", "no-cache")
 	}
 
-	resp, err := HTTPClient.Do(req)
+	clientMu.RLock()
+	client := HTTPClient
+	clientMu.RUnlock()
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}

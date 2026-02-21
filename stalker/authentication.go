@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 )
 
 // Handshake reserves a offered token in Portal. If offered token is not available - new one will be issued by stalker portal, reservedMAG254 and Stalker's config will be updated.
@@ -71,7 +72,44 @@ func (p *Portal) authenticate() (err error) {
 	}
 	var tmp tmpStruct
 
-	content, err := p.httpRequest(p.Location + "?type=stb&action=do_auth&login=" + p.Username + "&password=" + p.Password + "&device_id=" + p.DeviceID + "&device_id2=" + p.DeviceID2 + "&JsHttpRequest=1-xml")
+	// Build POST request to avoid logging password in URL
+	formData := url.Values{}
+	formData.Set("type", "stb")
+	formData.Set("action", "do_auth")
+	formData.Set("login", p.Username)
+	formData.Set("password", p.Password)
+	formData.Set("device_id", p.DeviceID)
+	formData.Set("device_id2", p.DeviceID2)
+	formData.Set("JsHttpRequest", "1-xml")
+
+	req, err := http.NewRequest("POST", p.Location, strings.NewReader(formData.Encode()))
+	if err != nil {
+		return err
+	}
+
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) MAG200 stbapp ver: 4 rev: 2116 Mobile Safari/533.3")
+	req.Header.Set("X-User-Agent", "Model: "+p.Model+"; Link: Ethernet")
+	req.Header.Set("Authorization", "Bearer "+p.Token)
+	req.Header.Set("Accept", "*/*")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+	req.Header.Set("Cache-Control", "no-cache")
+	req.Header.Set("Pragma", "no-cache")
+	if u, err := url.Parse(p.Location); err == nil {
+		req.Header.Set("Referer", u.Scheme+"://"+u.Host+"/")
+		req.Header.Set("Origin", u.Scheme+"://"+u.Host)
+	}
+	cookieText := "PHPSESSID=null; sn=" + url.QueryEscape(p.SerialNumber) + "; mac=" + url.QueryEscape(p.MAC) + "; stb_lang=en; timezone=" + url.QueryEscape(p.TimeZone) + ";"
+	req.Header.Set("Cookie", cookieText)
+
+	resp, err := HTTPClient.Do(req)
+	if err != nil {
+		log.Println("HTTP authentication request failed")
+		return err
+	}
+	defer resp.Body.Close()
+
+	content, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		log.Println("HTTP authentication request failed")
 		return err
