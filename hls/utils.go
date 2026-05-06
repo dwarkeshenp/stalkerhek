@@ -146,16 +146,8 @@ func response(link string) (*http.Response, error) {
 	}
 
 	req.Header.Set("User-Agent", userAgent)
-	req.Header.Set("X-User-Agent", "Model: MAG200; Link: Ethernet")
 	req.Header.Set("Accept", "*/*")
-	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
-	req.Header.Set("Cache-Control", "no-cache")
-	req.Header.Set("Pragma", "no-cache")
 	req.Header.Set("Connection", "keep-alive")
-	if u, err := url.Parse(link); err == nil {
-		req.Header.Set("Referer", u.Scheme+"://"+u.Host+"/")
-		req.Header.Set("Origin", u.Scheme+"://"+u.Host)
-	}
 
 	clientMu.RLock()
 	client := httpClient
