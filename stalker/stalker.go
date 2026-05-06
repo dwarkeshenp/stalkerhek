@@ -2,6 +2,7 @@ package stalker
 
 import (
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,17 +20,6 @@ func (p *Portal) Start() error {
 	// Reserve token in Stalker portal
 	if err := p.handshake(); err != nil {
 		return err
-	}
-
-	// Authorize token if credentials or deviceids are given
-	if p.Username != "" && p.Password != "" {
-		if err := p.authenticate(); err != nil {
-			return err
-		}
-	} else if p.DeviceIdAuth == true {
-		if err := p.authenticateWithDeviceIDs(); err != nil {
-			return err
-		}
 	}
 
 	// Run watchdog function once to check for errors:
@@ -65,6 +55,7 @@ func (p *Portal) httpRequest(link string) ([]byte, error) {
 	req.Header.Set("Authorization", "Bearer "+p.Token)
 	req.Header.Set("Accept", "*/*")
 	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+	req.Header.Set("Accept-Encoding", "identity")
 	req.Header.Set("Cache-Control", "no-cache")
 	req.Header.Set("Pragma", "no-cache")
 	if u, err := url.Parse(link); err == nil {
@@ -82,13 +73,22 @@ func (p *Portal) httpRequest(link string) ([]byte, error) {
 	}
 	defer resp.Body.Close()
 
+	var reader io.Reader = resp.Body
+	if resp.Header.Get("Content-Encoding") == "gzip" {
+		gzr, gzerr := gzip.NewReader(resp.Body)
+		if gzerr == nil {
+			defer gzr.Close()
+			reader = gzr
+		}
+	}
+
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		safeLink := link
 		if u, err := url.Parse(link); err == nil {
 			safeLink = u.Scheme + "://" + u.Host + u.Path
 		}
 		const maxDiag = 4096
-		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, maxDiag))
+		snippet, _ := io.ReadAll(io.LimitReader(reader, maxDiag))
 		msg := strings.TrimSpace(string(snippet))
 		if len(msg) > 300 {
 			msg = msg[:300]
@@ -99,7 +99,7 @@ func (p *Portal) httpRequest(link string) ([]byte, error) {
 		return nil, errors.New("Site '" + safeLink + "' returned " + resp.Status)
 	}
 
-	contents, err := ioutil.ReadAll(resp.Body)
+	contents, err := ioutil.ReadAll(reader)
 	if err != nil {
 		return nil, err
 	}

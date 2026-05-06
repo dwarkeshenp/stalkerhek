@@ -41,6 +41,8 @@ type Profile struct {
 	TimeZone     string `json:"time_zone,omitempty"`
 	Username     string `json:"username,omitempty"`
 	Password     string `json:"password,omitempty"`
+	Token        string `json:"token,omitempty"`
+	Prehash      string `json:"prehash,omitempty"`
 	WatchDogTime int    `json:"watchdog_time,omitempty"`
 }
 
@@ -299,6 +301,8 @@ func StartProfileServices(p Profile) {
 			MAC:          pd.MAC,
 			Username:     pd.Username,
 			Password:     pd.Password,
+			Token:        pd.Token,
+			Prehash:      pd.Prehash,
 		},
 		HLS: struct {
 			Enabled bool   `yaml:"enabled"`
@@ -555,6 +559,8 @@ func RegisterProfileHandlers(mux *http.ServeMux, onStart func()) {
 		timezone := strings.TrimSpace(r.FormValue("timezone"))
 		username := strings.TrimSpace(r.FormValue("username"))
 		password := strings.TrimSpace(r.FormValue("password"))
+		token := strings.TrimSpace(r.FormValue("token"))
+		prehash := strings.TrimSpace(r.FormValue("prehash"))
 		watchdogStr := strings.TrimSpace(r.FormValue("watchdog_time"))
 		watchdog, _ := strconv.Atoi(watchdogStr)
 		if portal == "" || mac == "" || hlsStr == "" || proxyStr == "" {
@@ -594,6 +600,8 @@ func RegisterProfileHandlers(mux *http.ServeMux, onStart func()) {
 					profiles[i].TimeZone = timezone
 					profiles[i].Username = username
 					profiles[i].Password = password
+					profiles[i].Token = token
+					profiles[i].Prehash = prehash
 					profiles[i].WatchDogTime = watchdog
 					updated = true
 					break
@@ -625,6 +633,8 @@ func RegisterProfileHandlers(mux *http.ServeMux, onStart func()) {
 			TimeZone:     timezone,
 			Username:     username,
 			Password:     password,
+			Token:        token,
+			Prehash:      prehash,
 			WatchDogTime: watchdog,
 		})
 		_ = SaveProfiles()
@@ -895,6 +905,18 @@ func RegisterProfileHandlers(mux *http.ServeMux, onStart func()) {
               </div>
               <div class="row two">
                 <div>
+                  <label for="token">Token <span style="color:var(--muted);font-size:.85em">(optional)</span></label>
+                  <input id="token" name="token" placeholder="Prehash token (if required)" title="Token for prehash authentication" />
+                  <div style="font-size:12px;color:var(--muted);margin-top:4px">For prehash auth portals</div>
+                </div>
+                <div>
+                  <label for="prehash">Prehash <span style="color:var(--muted);font-size:.85em">(optional)</span></label>
+                  <input id="prehash" name="prehash" placeholder="Prehash value (if required)" title="Prehash value for token+prehash authentication" />
+                  <div style="font-size:12px;color:var(--muted);margin-top:4px">For prehash auth portals</div>
+                </div>
+              </div>
+              <div class="row two">
+                <div>
                   <label for="model">STB Model <span style="color:var(--muted);font-size:.85em">(optional)</span></label>
                   <input id="model" name="model" placeholder="MAG254" title="Set-top box model identifier (default: MAG254)" />
                   <div style="font-size:12px;color:var(--muted);margin-top:4px">Default: MAG254</div>
@@ -946,7 +968,7 @@ func RegisterProfileHandlers(mux *http.ServeMux, onStart func()) {
       <div class="sub">Start or stop streaming, copy your links, or update your details. Editing will stop the stream first for safety.</div>
       <div id="profiles" class="profiles">
         {{range .Profiles}}
-          <div class="p" data-id="{{.ID}}" data-name="{{.Name}}" data-portal="{{.PortalURL}}" data-mac="{{.MAC}}" data-hls="{{.HlsPort}}" data-proxy="{{.ProxyPort}}" data-model="{{.Model}}" data-serial="{{.SerialNumber}}" data-deviceid="{{.DeviceID}}" data-deviceid2="{{.DeviceID2}}" data-signature="{{.Signature}}" data-timezone="{{.TimeZone}}" data-username="{{.Username}}" data-password="{{.Password}}" data-watchdog="{{.WatchDogTime}}">
+          <div class="p" data-id="{{.ID}}" data-name="{{.Name}}" data-portal="{{.PortalURL}}" data-mac="{{.MAC}}" data-hls="{{.HlsPort}}" data-proxy="{{.ProxyPort}}" data-model="{{.Model}}" data-serial="{{.SerialNumber}}" data-deviceid="{{.DeviceID}}" data-deviceid2="{{.DeviceID2}}" data-signature="{{.Signature}}" data-timezone="{{.TimeZone}}" data-username="{{.Username}}" data-password="{{.Password}}" data-token="{{.Token}}" data-prehash="{{.Prehash}}" data-watchdog="{{.WatchDogTime}}">
             <div class="phead">
               <div>
                 <div class="pname">{{if .Name}}{{.Name}}{{else}}Profile {{.ID}}{{end}}</div>
@@ -1068,6 +1090,19 @@ func RegisterProfileHandlers(mux *http.ServeMux, onStart func()) {
         <label>Signature <span style="color:var(--muted);font-size:.85em">(optional)</span></label>
         <input id="qe_signature" name="signature" placeholder="64-character hex (auto-generated if empty)" maxlength="64" />
         <div style="font-size:11px;color:var(--muted);margin-bottom:12px">64-char hex, default: all f's</div>
+
+        <div class="row two">
+          <div>
+            <label>Token <span style="color:var(--muted);font-size:.85em">(optional)</span></label>
+            <input id="qe_token" name="token" placeholder="Prehash token" />
+            <div style="font-size:11px;color:var(--muted)">For prehash auth portals</div>
+          </div>
+          <div>
+            <label>Prehash <span style="color:var(--muted);font-size:.85em">(optional)</span></label>
+            <input id="qe_prehash" name="prehash" placeholder="Prehash value" />
+            <div style="font-size:11px;color:var(--muted)">For prehash auth portals</div>
+          </div>
+        </div>
 
         <div class="row two">
           <div>
@@ -1280,6 +1315,8 @@ func RegisterProfileHandlers(mux *http.ServeMux, onStart func()) {
       document.getElementById('timezone').value=card.getAttribute('data-timezone')||'';
       document.getElementById('username').value=card.getAttribute('data-username')||'';
       document.getElementById('password').value=card.getAttribute('data-password')||'';
+      document.getElementById('token').value=card.getAttribute('data-token')||'';
+      document.getElementById('prehash').value=card.getAttribute('data-prehash')||'';
       document.getElementById('watchdog_time').value=card.getAttribute('data-watchdog')||'';
 
       document.getElementById('saveBtn').innerHTML='<i class="fa-regular fa-floppy-disk"></i> <span class="btntext">Save Changes</span>';
@@ -1357,6 +1394,8 @@ func RegisterProfileHandlers(mux *http.ServeMux, onStart func()) {
 		document.getElementById('qe_proxy_port').value = card.getAttribute('data-proxy')||'';
 		document.getElementById('qe_username').value = card.getAttribute('data-username')||'';
 		document.getElementById('qe_password').value = card.getAttribute('data-password')||'';
+		document.getElementById('qe_token').value = card.getAttribute('data-token')||'';
+		document.getElementById('qe_prehash').value = card.getAttribute('data-prehash')||'';
 		document.getElementById('qe_model').value = card.getAttribute('data-model')||'';
 		document.getElementById('qe_serial_number').value = card.getAttribute('data-serial')||'';
 		document.getElementById('qe_device_id').value = card.getAttribute('data-deviceid')||'';

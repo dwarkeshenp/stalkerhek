@@ -20,7 +20,7 @@ func (p *Portal) handshake() error {
 	}
 	var tmp tmpStruct
 
-	req, err := http.NewRequest("GET", p.Location+"?type=stb&action=handshake&token="+p.Token+"&JsHttpRequest=1-xml", nil)
+	req, err := http.NewRequest("GET", p.Location+"?type=stb&action=handshake&token="+p.Token+"&prehash="+p.Prehash+"&JsHttpRequest=1-xml", nil)
 	if err != nil {
 		return err
 	}

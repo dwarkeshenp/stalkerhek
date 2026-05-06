@@ -62,6 +62,7 @@ type Portal struct {
 	Location     string `yaml:"url"`
 	TimeZone     string `yaml:"time_zone"`
 	Token        string `yaml:"token"`
+	Prehash      string `yaml:"prehash"`
 	WatchDogTime int    `yaml:"watchdog"`
 	DeviceIdAuth bool   `yaml:"device_id_auth"`
 }
@@ -96,11 +97,12 @@ const (
 	defaultDeviceID2    = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
 	defaultSignature    = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
 	defaultTimeZone     = "UTC"
-	defaultWatchDogTime = 5
+	defaultWatchDogTime = 10
 )
 
 // applyPortalDefaults sets default values for optional portal parameters
 func applyPortalDefaults(p *Portal) {
+	p.DeviceIdAuth = false
 	if p.Model == "" {
 		p.Model = defaultModel
 	}
