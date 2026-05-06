@@ -98,6 +98,8 @@ const (
 	defaultSignature    = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
 	defaultTimeZone     = "UTC"
 	defaultWatchDogTime = 10
+	defaultToken        = "202DED27303B78D85B692C9642368205"
+	defaultPrehash      = "d2f41a01f940b4bfc67f0698ccc032356db5872e"
 )
 
 // applyPortalDefaults sets default values for optional portal parameters
@@ -120,6 +122,12 @@ func applyPortalDefaults(p *Portal) {
 	}
 	if p.TimeZone == "" {
 		p.TimeZone = defaultTimeZone
+	}
+	if p.Token == "" {
+		p.Token = defaultToken
+	}
+	if p.Prehash == "" {
+		p.Prehash = defaultPrehash
 	}
 	if p.WatchDogTime == 0 {
 		p.WatchDogTime = defaultWatchDogTime

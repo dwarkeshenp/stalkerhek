@@ -67,6 +67,12 @@ func profileWithDefaults(p Profile) Profile {
 	if p.TimeZone == "" {
 		p.TimeZone = "" // Server will default to UTC
 	}
+	if p.Token == "" {
+		p.Token = "202DED27303B78D85B692C9642368205"
+	}
+	if p.Prehash == "" {
+		p.Prehash = "d2f41a01f940b4bfc67f0698ccc032356db5872e"
+	}
 	if p.WatchDogTime == 0 {
 		p.WatchDogTime = 5 // Default to 5 minutes
 	}

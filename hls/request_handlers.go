@@ -45,7 +45,7 @@ func (s *serverState) channelHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Lock channel's mux for validation only
+	// Lock channel's mux for validation and content handling
 	cr.ChannelRef.Mux.Lock()
 
 	// Keep track on channel access time
@@ -56,10 +56,7 @@ func (s *serverState) channelHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Release lock before long-running streaming to allow parallel streams
-	cr.ChannelRef.Mux.Unlock()
-
-	// Handle content without holding the lock
+	// Lock is held; handleContent will unlock after copying channel state
 	handleContent(cr)
 }
 
